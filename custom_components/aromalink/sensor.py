@@ -44,12 +44,33 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-class AromaLinkPhaseSensor(SensorEntity):
-    """Sensor for the current phase (work or pause)."""
+class AromaLinkBaseSensor(SensorEntity):
+    """Base class for Aroma-Link sensors with common availability logic."""
 
     def __init__(self, client, device):
         self._client = client
         self._device = device
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self._client.is_device_available(self._device.id)
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers = {(DOMAIN, self._device.id)},
+            name = self._device.name,
+            manufacturer = "Aroma-Link",
+            model = "Diffuser",
+        )
+
+
+class AromaLinkPhaseSensor(AromaLinkBaseSensor):
+    """Sensor for the current phase (work or pause)."""
+
+    def __init__(self, client, device):
+        super().__init__(client, device)
         self._attr_unique_id = f"{device.id}_current_phase"
         self._attr_name = f"{device.name} Current Phase"
         self._attr_native_value = None
@@ -69,21 +90,12 @@ class AromaLinkPhaseSensor(SensorEntity):
         """Cleanup on entity removal."""
         self._client.remove_callback(self._handle_ws_message)
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers = {(DOMAIN, self._device.id)},
-            name = self._device.name,
-            manufacturer = "Aroma-Link",
-            model = "Diffuser",
-        )
 
-class AromaLinkWorkCountdownSensor(SensorEntity):
+class AromaLinkWorkCountdownSensor(AromaLinkBaseSensor):
     """Sensor for work countdown time."""
 
     def __init__(self, client, device):
-        self._client = client
-        self._device = device
+        super().__init__(client, device)
         self._attr_unique_id = f"{device.id}_work_countdown"
         self._attr_name = f"{device.name} Work Countdown"
         self._attr_native_value = None
@@ -105,25 +117,16 @@ class AromaLinkWorkCountdownSensor(SensorEntity):
                     }
                     self.async_write_ha_state()
 
-    async def async_will_remove_from_hass() -> None:
+    async def async_will_remove_from_hass(self) -> None:
         """Cleanup on entity removal."""
         self._client.remove_callback(self._handle_ws_message)
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers = {(DOMAIN, self._device.id)},
-            name = self._device.name,
-            manufacturer = "Aroma-Link",
-            model = "Diffuser",
-        )
 
-class AromaLinkPauseCountdownSensor(SensorEntity):
+class AromaLinkPauseCountdownSensor(AromaLinkBaseSensor):
     """Sensor for pause countdown time."""
 
     def __init__(self, client, device):
-        self._client = client
-        self._device = device
+        super().__init__(client, device)
         self._attr_unique_id = f"{device.id}_pause_countdown"
         self._attr_name = f"{device.name} Pause Countdown"
         self._attr_native_value = None
@@ -145,15 +148,6 @@ class AromaLinkPauseCountdownSensor(SensorEntity):
                     }
                     self.async_write_ha_state()
 
-    async def async_will_remove_from_hass() -> None:
+    async def async_will_remove_from_hass(self) -> None:
         """Cleanup on entity removal."""
         self._client.remove_callback(self._handle_ws_message)
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers = {(DOMAIN, self._device.id)},
-            name = self._device.name,
-            manufacturer = "Aroma-Link",
-            model = "Diffuser",
-        )

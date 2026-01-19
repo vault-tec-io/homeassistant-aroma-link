@@ -2,15 +2,14 @@ import asyncio
 import hashlib
 import json
 import logging
-import threading
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import aiohttp
 import websockets
 
 BASE_URL = "https://www.aroma-link.com"
-WS_URL = "ws://www.aroma-link.com/ws/asset"
+WS_URL = "wss://www.aroma-link.com/ws/asset"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,9 +22,23 @@ class AromaLinkDevice:
         self.has_fan = device_data["hasFan"] == 1
         self.online = device_data["onlineStatus"] == 1
 
+
+class _SessionContext:
+    """Context manager wrapper for shared session that doesn't close on exit."""
+    def __init__(self, session: aiohttp.ClientSession):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # Don't close the shared session
+        pass
+
+
 class AromaLinkClient:
     """API Client for Aroma-Link devices."""
-    def __init__(self, username: str, password: str = None, access_token: str = None):
+    def __init__(self, username: str, password: str = None, access_token: str = None, session: aiohttp.ClientSession = None):
         self.username = username
         self.password = password
         self.hashed_password = hashlib.md5(password.encode()).hexdigest() if password else None
@@ -33,22 +46,29 @@ class AromaLinkClient:
         self.refresh_token = None
         self.user_id = None
         self.devices: List[AromaLinkDevice] = []
-        self.ws = None
-        self.ws_task = None
-        self._ws_connected = False
         self._callbacks = []
-        self._waiting_for_response = False
-        self._current_phase = None
-        self._work_remain_time = 0
-        self._pause_remain_time = 0
-        self._work_time = 0
-        self._pause_time = 0
         self.ws_tasks = {}  # device_id -> task
+        self._ws_connections = {}  # device_id -> websocket
+        self._ws_connected = {}  # device_id -> bool
+        self._session = session  # Optional shared aiohttp session
+        # Per-device state
+        self._device_state = {}  # device_id -> {current_phase, work_remain_time, pause_remain_time, work_time, pause_time, waiting_for_response}
+
+    def set_session(self, session: aiohttp.ClientSession):
+        """Set the aiohttp session (called after HA setup)."""
+        self._session = session
+
+    def _get_session_context(self):
+        """Get session context manager - reuse shared session or create new one."""
+        if self._session:
+            # Return a context manager that doesn't close the shared session
+            return _SessionContext(self._session)
+        return aiohttp.ClientSession()
 
     async def login(self) -> bool:
         """Login and get access token."""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session_context() as session:
                 # Login
                 login_data = {"userName": self.username, "password": self.hashed_password}
                 async with session.post(f"{BASE_URL}/v1/app/user/newLogin", data=login_data) as resp:
@@ -68,10 +88,35 @@ class AromaLinkClient:
             _LOGGER.exception("Login failed")
             return False
 
+    async def refresh_access_token(self) -> bool:
+        """Refresh the access token using the refresh token."""
+        if not self.refresh_token:
+            _LOGGER.warning("No refresh token available, cannot refresh")
+            return False
+
+        try:
+            async with self._get_session_context() as session:
+                data = {"refreshToken": self.refresh_token}
+                async with session.post(f"{BASE_URL}/v2/app/token/refresh", data=data) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning("Token refresh failed with status %s", resp.status)
+                        return False
+                    result = await resp.json()
+                    if result.get("code") == 200 and result.get("data"):
+                        self.access_token = result["data"].get("accessToken", self.access_token)
+                        self.refresh_token = result["data"].get("refreshToken", self.refresh_token)
+                        _LOGGER.debug("Token refreshed successfully")
+                        return True
+                    _LOGGER.warning("Token refresh response invalid: %s", result)
+                    return False
+        except Exception:
+            _LOGGER.exception("Token refresh failed")
+            return False
+
     async def get_devices(self) -> List[AromaLinkDevice]:
         """Get list of devices."""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session_context() as session:
                 headers = {"access_token": self.access_token}
                 async with session.get(f"{BASE_URL}/v1/app/device/listAll/{self.user_id}", headers=headers) as resp:
                     if resp.status != 200:
@@ -90,7 +135,7 @@ class AromaLinkClient:
     async def set_power(self, device_id: str, state: bool) -> bool:
         """Set device power state."""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session_context() as session:
                 data = {
                     "deviceId": device_id,
                     "onOff": "1" if state else "0",
@@ -106,7 +151,7 @@ class AromaLinkClient:
     async def set_fan(self, device_id: str, state: bool) -> bool:
         """Set device fan state."""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session_context() as session:
                 data = {
                     "deviceId": device_id,
                     "fan": "1" if state else "0",
@@ -127,7 +172,7 @@ class AromaLinkClient:
     ) -> bool:
         """Set device schedule."""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session_context() as session:
                 data = {
                     "deviceId": device_id,
                     "userId": self.user_id,
@@ -158,10 +203,24 @@ class AromaLinkClient:
             _LOGGER.error("Failed to set schedule: %s", e)
             return False
 
+    def _init_device_state(self, device_id: str):
+        """Initialize state tracking for a device."""
+        if device_id not in self._device_state:
+            self._device_state[device_id] = {
+                "current_phase": None,
+                "work_remain_time": 0,
+                "pause_remain_time": 0,
+                "work_time": 0,
+                "pause_time": 0,
+                "waiting_for_response": False,
+            }
+
     async def start_websocket(self, device_id: str):
         """Start WebSocket connection for a device."""
         if device_id in self.ws_tasks:
             return
+        self._init_device_state(device_id)
+        self._ws_connected[device_id] = False
         self.ws_tasks[device_id] = asyncio.create_task(self._websocket_handler(device_id))
 
     async def _websocket_handler(self, device_id: str):
@@ -170,7 +229,7 @@ class AromaLinkClient:
         while True:
             try:
                 # Trigger newWork page before WebSocket connection
-                async with aiohttp.ClientSession() as session:
+                async with self._get_session_context() as session:
                     headers = {
                         "access_token": self.access_token,
                         "User-Agent": "KeRuiMa/1.1.3",
@@ -181,13 +240,13 @@ class AromaLinkClient:
                     await session.get(url, headers=headers)
 
                 async with websockets.connect(WS_URL) as websocket:
-                    self.ws = websocket
-                    self._ws_connected = True
+                    self._ws_connections[device_id] = websocket
+                    self._ws_connected[device_id] = True
 
                     # Start monitoring tasks
                     heartbeat_task = asyncio.create_task(self._heartbeat(device_id))
                     supercommand_task = asyncio.create_task(self._supercommand_monitor(device_id))
-                    countdown_task = asyncio.create_task(self._countdown_monitor())
+                    countdown_task = asyncio.create_task(self._countdown_monitor(device_id))
 
                     # Send initial SUPERCOMMAND
                     await self._send_supercommand(device_id)
@@ -207,32 +266,40 @@ class AromaLinkClient:
                 backoff = 5  # Reset on success
 
             except Exception as e:
-                _LOGGER.error("WebSocket error: %s", e)
-                self._ws_connected = False
-                self.ws = None
+                _LOGGER.error("WebSocket error for device %s: %s", device_id, e)
+                self._ws_connected[device_id] = False
+                self._ws_connections.pop(device_id, None)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 300)  # Cap at 5 minutes
 
     async def _heartbeat(self, device_id: str):
         """Send heartbeat messages."""
-        while self._ws_connected:
+        while self._ws_connected.get(device_id, False):
             try:
+                ws = self._ws_connections.get(device_id)
+                if not ws:
+                    break
                 message = {
                     "type": "HEARTBEAT",
                     "data": "{}",
                     "deviceId": device_id
                 }
-                await self.ws.send(json.dumps(message))
+                await ws.send(json.dumps(message))
                 await asyncio.sleep(10)
             except Exception as e:
-                _LOGGER.error("Heartbeat error: %s", e)
+                _LOGGER.error("Heartbeat error for device %s: %s", device_id, e)
                 break
 
     async def _send_supercommand(self, device_id: str):
         """Send SUPERCOMMAND message with trigger."""
         try:
+            ws = self._ws_connections.get(device_id)
+            if not ws:
+                _LOGGER.error("No WebSocket connection for device %s", device_id)
+                return
+
             # Always trigger newWork before SUPERCOMMAND
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session_context() as session:
                 headers = {
                     "access_token": self.access_token,
                     "User-Agent": "KeRuiMa/1.1.3",
@@ -248,20 +315,20 @@ class AromaLinkClient:
                 "data": {},
                 "deviceId": device_id
             }
-            await self.ws.send(json.dumps(message))
-            self._waiting_for_response = True
+            await ws.send(json.dumps(message))
+            self._device_state[device_id]["waiting_for_response"] = True
             _LOGGER.debug("Sent SUPERCOMMAND for device %s", device_id)
         except Exception as e:
-            _LOGGER.error("Failed to send SUPERCOMMAND: %s", e)
+            _LOGGER.error("Failed to send SUPERCOMMAND for device %s: %s", device_id, e)
 
     async def _handle_message(self, message: str, device_id: str):
         """Handle incoming WebSocket messages."""
         try:
             if message == "连接成功":
-                _LOGGER.debug("WebSocket connection successful")
+                _LOGGER.debug("WebSocket connection successful for device %s", device_id)
                 return
 
-            _LOGGER.debug("Received WebSocket message: %s", message)
+            _LOGGER.debug("Received WebSocket message for device %s: %s", device_id, message)
 
             # Parse the message as JSON if it's a string
             try:
@@ -285,17 +352,19 @@ class AromaLinkClient:
                         return
 
                 if str(device_data.get("deviceId")) == str(device_id):
-                    self._work_time = device_data.get("workTime", 0)
-                    self._pause_time = device_data.get("pauseTime", 0)
-                    self._work_remain_time = device_data.get("workRemainTime", 0)
-                    self._pause_remain_time = device_data.get("pauseRemainTime", 0)
-                    self._current_phase = "work" if device_data.get("workStatus") == 1 else "pause"
-                    self._waiting_for_response = False
+                    state = self._device_state[device_id]
+                    state["work_time"] = device_data.get("workTime", 0)
+                    state["pause_time"] = device_data.get("pauseTime", 0)
+                    state["work_remain_time"] = device_data.get("workRemainTime", 0)
+                    state["pause_remain_time"] = device_data.get("pauseRemainTime", 0)
+                    state["current_phase"] = "work" if device_data.get("workStatus") == 1 else "pause"
+                    state["waiting_for_response"] = False
                     _LOGGER.debug(
-                        "Updated state: work_time=%s, pause_time=%s, phase=%s",
-                        self._work_time,
-                        self._pause_time,
-                        self._current_phase,
+                        "Updated state for device %s: work_time=%s, pause_time=%s, phase=%s",
+                        device_id,
+                        state["work_time"],
+                        state["pause_time"],
+                        state["current_phase"],
                     )
 
             # Notify all callbacks
@@ -305,7 +374,7 @@ class AromaLinkClient:
                 else:
                     _LOGGER.error("Callback data is not a dict: %s", data)
         except Exception as e:
-            _LOGGER.exception("Failed to handle message: %s", e)
+            _LOGGER.exception("Failed to handle message for device %s: %s", device_id, e)
 
     async def _supercommand_monitor(self, device_id: str):
         """Monitor and send SUPERCOMMAND at appropriate intervals."""
@@ -313,83 +382,131 @@ class AromaLinkClient:
         sent_before_work_ends = False
         sent_after_pause_starts = False
 
-        while self._ws_connected:
+        while self._ws_connected.get(device_id, False):
             try:
-                if not self._waiting_for_response:
-                    if self._current_phase == "pause":
+                state = self._device_state.get(device_id, {})
+                if not state.get("waiting_for_response", False):
+                    current_phase = state.get("current_phase")
+                    pause_remain = state.get("pause_remain_time", 0)
+                    work_remain = state.get("work_remain_time", 0)
+                    pause_time = state.get("pause_time", 0)
+                    work_time = state.get("work_time", 0)
+
+                    if current_phase == "pause":
                         # Send SUPERCOMMAND 1 second before pause ends
-                        if self._pause_remain_time == 1 and not sent_before_pause_ends:
+                        if pause_remain == 1 and not sent_before_pause_ends:
                             await self._send_supercommand(device_id)
                             sent_before_pause_ends = True
 
                         # Send SUPERCOMMAND 1 second after pause starts
-                        if (self._pause_remain_time == self._pause_time - 1 
-                            and not sent_after_pause_starts):
+                        if pause_remain == pause_time - 1 and not sent_after_pause_starts:
                             await self._send_supercommand(device_id)
                             sent_after_pause_starts = True
 
-                    elif self._current_phase == "work":
+                    elif current_phase == "work":
                         # Send SUPERCOMMAND 1 second before work ends
-                        if self._work_remain_time == 1 and not sent_before_work_ends:
+                        if work_remain == 1 and not sent_before_work_ends:
                             await self._send_supercommand(device_id)
                             sent_before_work_ends = True
 
                     # Reset flags when transitioning between phases
-                    if (self._current_phase == "pause" and 
-                        self._pause_remain_time > 1 and 
-                        self._pause_remain_time < self._pause_time - 1):
+                    if current_phase == "pause" and pause_remain > 1 and pause_remain < pause_time - 1:
                         sent_before_pause_ends = False
                         sent_after_pause_starts = False
 
-                    if (self._current_phase == "work" and 
-                        self._work_remain_time > 1 and 
-                        self._work_remain_time < self._work_time - 1):
+                    if current_phase == "work" and work_remain > 1 and work_remain < work_time - 1:
                         sent_before_work_ends = False
 
                 await asyncio.sleep(1)
             except Exception as e:
-                _LOGGER.error("Error in SUPERCOMMAND monitor: %s", e)
+                _LOGGER.error("Error in SUPERCOMMAND monitor for device %s: %s", device_id, e)
                 await asyncio.sleep(1)
 
-    async def _countdown_monitor(self):
-        """Monitor and update countdown timers."""
-        while self._ws_connected:
+    async def _countdown_monitor(self, device_id: str):
+        """Monitor and update countdown timers for a specific device."""
+        while self._ws_connected.get(device_id, False):
             try:
-                if self._current_phase == "work" and self._work_remain_time > 0:
-                    self._work_remain_time -= 1
+                state = self._device_state.get(device_id)
+                if not state:
+                    await asyncio.sleep(1)
+                    continue
+
+                current_phase = state.get("current_phase")
+                work_remain = state.get("work_remain_time", 0)
+                pause_remain = state.get("pause_remain_time", 0)
+
+                if current_phase == "work" and work_remain > 0:
+                    state["work_remain_time"] = work_remain - 1
                     # Notify callbacks of time change
                     for callback in self._callbacks:
                         await callback({
                             "type": "COUNTDOWN",
                             "data": {
-                                "deviceId": self.devices[0].id,  # Assuming single device for now
-                                "workRemainTime": self._work_remain_time,
+                                "deviceId": device_id,
+                                "workRemainTime": state["work_remain_time"],
                                 "currentPhase": "work"
                             }
                         })
-                elif self._current_phase == "pause" and self._pause_remain_time > 0:
-                    self._pause_remain_time -= 1
+                elif current_phase == "pause" and pause_remain > 0:
+                    state["pause_remain_time"] = pause_remain - 1
                     # Notify callbacks of time change
                     for callback in self._callbacks:
                         await callback({
                             "type": "COUNTDOWN",
                             "data": {
-                                "deviceId": self.devices[0].id,  # Assuming single device for now
-                                "pauseRemainTime": self._pause_remain_time,
+                                "deviceId": device_id,
+                                "pauseRemainTime": state["pause_remain_time"],
                                 "currentPhase": "pause"
                             }
                         })
+
                 # Handle phase transition
-                if self._current_phase == "work" and self._work_remain_time == 0:
-                    self._current_phase = "pause"
-                    _LOGGER.debug("Transitioned to pause phase")
-                elif self._current_phase == "pause" and self._pause_remain_time == 0:
-                    self._current_phase = "work"
-                    _LOGGER.debug("Transitioned to work phase")
+                if current_phase == "work" and state["work_remain_time"] == 0:
+                    state["current_phase"] = "pause"
+                    _LOGGER.debug("Device %s transitioned to pause phase", device_id)
+                elif current_phase == "pause" and state["pause_remain_time"] == 0:
+                    state["current_phase"] = "work"
+                    _LOGGER.debug("Device %s transitioned to work phase", device_id)
+
                 await asyncio.sleep(1)
             except Exception as e:
-                _LOGGER.error("Error in countdown monitor: %s", e)
+                _LOGGER.error("Error in countdown monitor for device %s: %s", device_id, e)
                 await asyncio.sleep(1)
+
+    async def stop_all_websockets(self):
+        """Stop all WebSocket connections and cancel tasks."""
+        for device_id in list(self.ws_tasks.keys()):
+            await self.stop_websocket(device_id)
+
+    async def stop_websocket(self, device_id: str):
+        """Stop WebSocket connection for a specific device."""
+        # Mark as disconnected to stop loops
+        self._ws_connected[device_id] = False
+
+        # Cancel the task
+        task = self.ws_tasks.pop(device_id, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # Close the WebSocket connection
+        ws = self._ws_connections.pop(device_id, None)
+        if ws:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+
+        # Clean up device state
+        self._device_state.pop(device_id, None)
+        _LOGGER.debug("Stopped WebSocket for device %s", device_id)
+
+    def is_device_available(self, device_id: str) -> bool:
+        """Check if a device's WebSocket connection is active."""
+        return self._ws_connected.get(str(device_id), False)
 
     def add_callback(self, callback):
         """Add callback for WebSocket messages."""
@@ -410,7 +527,7 @@ class AromaLinkClient:
                 "Accept": "*/*",
                 "version": "1"
             }
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session_context() as session:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status != 200:
                         _LOGGER.error("Failed to get schedule: %s", resp.status)
@@ -429,12 +546,16 @@ class AromaLinkClient:
         schedule = await self.get_schedule_for_day(device_id, day_of_week)
         # Optionally, do something with the schedule here (e.g., store or update state)
         try:
+            ws = self._ws_connections.get(device_id)
+            if not ws:
+                _LOGGER.error("No WebSocket connection for device %s", device_id)
+                return
             message = {
                 "type": "WORK_TIME_FREQUENCY",
                 "data": "{}",
                 "deviceId": device_id
             }
-            await self.ws.send(json.dumps(message))
+            await ws.send(json.dumps(message))
             _LOGGER.debug("Sent WORK_TIME_FREQUENCY for device %s", device_id)
         except Exception as e:
-            _LOGGER.error("Failed to send WORK_TIME_FREQUENCY: %s", e)
+            _LOGGER.error("Failed to send WORK_TIME_FREQUENCY for device %s: %s", device_id, e)

@@ -62,7 +62,7 @@ class AromaLinkPowerSwitch(SwitchEntity):
                     self._is_on = new_state
                     self.async_write_ha_state()
 
-    async def async_will_remove_from_hass() -> None:
+    async def async_will_remove_from_hass(self) -> None:
         """Cleanup on entity removal."""
         self._client.remove_callback(self._handle_ws_message)
 
@@ -70,6 +70,11 @@ class AromaLinkPowerSwitch(SwitchEntity):
     def is_on(self) -> bool:
         """Return true if device is on."""
         return self._is_on
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self._client.is_device_available(self._device.id)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -131,6 +136,11 @@ class AromaLinkFanSwitch(SwitchEntity):
         return self._is_on
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self._client.is_device_available(self._device.id)
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers = {(DOMAIN, self._device.id)},
@@ -138,7 +148,7 @@ class AromaLinkFanSwitch(SwitchEntity):
             manufacturer = "Aroma-Link",
             model = "Diffuser",
         )
-    
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the fan on."""
         if await self._client.set_fan(self._device.id, True):

@@ -40,9 +40,10 @@ class AromaLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             title=username,
                             data={
                                 "username": username,
+                                "password": password,
                                 "user_id": client.user_id,
                                 "access_token": client.access_token,
-                                # Do not store device_id here
+                                "refresh_token": client.refresh_token,
                             },
                         )
                 else:

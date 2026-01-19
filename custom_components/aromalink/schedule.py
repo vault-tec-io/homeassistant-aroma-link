@@ -78,6 +78,11 @@ class AromaLinkScheduleEntity(Entity):
         }
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self._client.is_device_available(self._device.id)
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers = {(DOMAIN, self._device.id)},
