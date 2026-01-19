@@ -16,7 +16,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER]
-CUSTOM_PLATFORMS: list[str] = ["schedule"]
+CUSTOM_PLATFORMS: list[str] = ["device_schedule"]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Aroma-Link component."""
