@@ -3,7 +3,7 @@ DOMAIN = "aroma_link"
 
 # API Constants
 BASE_URL = "https://www.aroma-link.com"
-WS_URL = "wss://www.aroma-link.com/ws/asset"
+WS_URL = "ws://www.aroma-link.com/ws/asset"
 
 # Entity Constants
 ATTR_WORK_TIME = "work_time"

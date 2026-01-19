@@ -9,7 +9,7 @@ import aiohttp
 import websockets
 
 BASE_URL = "https://www.aroma-link.com"
-WS_URL = "wss://www.aroma-link.com/ws/asset"
+WS_URL = "ws://www.aroma-link.com/ws/asset"
 
 _LOGGER = logging.getLogger(__name__)
 
