@@ -1,0 +1,18 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        },
+        "description": "Enter your Aroma-Link credentials"
+      }
+    },
+    "error": {
+      "unknown": "Unexpected error occurred",
+      "no_devices": "No devices found on account",
+      "auth_failed": "Authentication failed"
+    }
+  }
+}

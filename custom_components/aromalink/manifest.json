@@ -1,0 +1,14 @@
+{
+    "domain": "aromalink",
+    "name": "Aroma-Link Diffuser",
+    "version": "0.1.0",
+    "documentation": "https://github.com/yourusername/aromalink-homeassistant",
+    "dependencies": [],
+    "codeowners": ["@yourgithubusername"],
+    "requirements": [
+        "websockets>=10.0",
+        "aiohttp>=3.8.0"
+    ],
+    "config_flow": true,
+    "iot_class": "cloud_push"
+}
