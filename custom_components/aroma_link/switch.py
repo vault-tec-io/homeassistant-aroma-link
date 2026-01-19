@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import EntityCategory, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .aromalink_api import AromaLinkDevice
+from .aroma_link_api import AromaLinkDevice
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -46,9 +46,9 @@ The integration monitors and controls the following attributes:
 ### Manual Installation
 
 1. Download the latest release from the [releases page](https://github.com/vault-tec-io/homeassistant-aroma-link/releases)
-2. Extract the `aromalink` folder to your `custom_components` directory:
+2. Extract the `aroma_link` folder to your `custom_components` directory:
    ```
-   config/custom_components/aromalink/
+   config/custom_components/aroma_link/
    ```
 3. Restart Home Assistant
 4. Add the integration through the UI
@@ -204,7 +204,7 @@ If you encounter issues:
    logger:
      default: info
      logs:
-       custom_components.aromalink: debug
+       custom_components.aroma_link: debug
    ```
 4. Open a [new issue](https://github.com/vault-tec-io/homeassistant-aroma-link/issues/new) with logs and device details
 

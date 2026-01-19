@@ -6,7 +6,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import DOMAIN
-from .aromalink_api import AromaLinkClient
+from .aroma_link_api import AromaLinkClient
 
 _LOGGER = logging.getLogger(__name__)
 

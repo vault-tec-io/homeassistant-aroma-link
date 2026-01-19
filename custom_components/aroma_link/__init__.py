@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .aromalink_api import AromaLinkClient
+from .aroma_link_api import AromaLinkClient
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)

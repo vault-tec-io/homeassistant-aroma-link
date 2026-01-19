@@ -10,7 +10,7 @@ This is a Home Assistant custom integration for Aroma-Link WiFi diffuser devices
 
 This is a Home Assistant custom component - there are no build/test/lint commands defined. To develop:
 
-1. Copy the `custom_components/aromalink` folder to your Home Assistant's `custom_components/` directory
+1. Copy the `custom_components/aroma_link` folder to your Home Assistant's `custom_components/` directory
 2. Restart Home Assistant to load the integration
 3. Add the integration through Home Assistant's UI (Settings → Devices & Services → Add Integration)
 
@@ -23,9 +23,9 @@ Dependencies (installed by Home Assistant):
 ### Component Structure
 
 ```
-custom_components/aromalink/
+custom_components/aroma_link/
 ├── __init__.py          # Integration setup, platform registration
-├── aromalink_api.py     # Core API client (REST + WebSocket)
+├── aroma_link_api.py    # Core API client (REST + WebSocket)
 ├── config_flow.py       # Credential collection UI flow
 ├── const.py             # Constants (API URLs, defaults)
 ├── switch.py            # Power & Fan toggle entities
@@ -38,7 +38,7 @@ custom_components/aromalink/
 
 1. **config_flow.py** collects credentials and validates via API login
 2. **__init__.py** sets up the integration and forwards to entity platforms
-3. **aromalink_api.py** (`AromaLinkClient`) manages all device communication:
+3. **aroma_link_api.py** (`AromaLinkClient`) manages all device communication:
    - REST API for login, device discovery, and control commands
    - WebSocket for real-time state updates and heartbeat
 4. Entity platforms (switch, sensor, number, schedule) register callbacks with the API client to receive updates
