@@ -2,9 +2,9 @@
     "domain": "aromalink",
     "name": "Aroma-Link Diffuser",
     "version": "0.1.0",
-    "documentation": "https://github.com/yourusername/aromalink-homeassistant",
+    "documentation": "https://github.com/vault-tec-io/homeassistant-aroma-link",
     "dependencies": [],
-    "codeowners": ["@yourgithubusername"],
+    "codeowners": ["@vault-tec-io"],
     "requirements": [
         "websockets>=10.0",
         "aiohttp>=3.8.0"
