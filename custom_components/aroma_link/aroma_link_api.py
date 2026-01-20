@@ -344,14 +344,16 @@ class AromaLinkClient:
                 _LOGGER.error("Unexpected message format: %s", data)
                 return
 
+            # Parse nested JSON strings in data field
+            if "data" in data and isinstance(data["data"], str):
+                try:
+                    data["data"] = json.loads(data["data"])
+                except Exception:
+                    _LOGGER.error("Failed to decode data field: %s", data["data"])
+                    return
+
             if data.get("type") == "SUPERCOMMAND":
                 device_data = data.get("data", {})
-                if isinstance(device_data, str):
-                    try:
-                        device_data = json.loads(device_data)
-                    except Exception:
-                        _LOGGER.error("Failed to decode device_data: %s", device_data)
-                        return
 
                 if str(device_data.get("deviceId")) == str(device_id):
                     state = self._device_state[device_id]
