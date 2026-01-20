@@ -80,10 +80,14 @@ class AromaLinkPhaseSensor(AromaLinkBaseSensor):
         """Handle WebSocket state updates."""
         if not isinstance(message, dict):
             return
-        if message.get("type") == "COUNTDOWN":
+        if message.get("type") in ["SUPERCOMMAND", "COUNTDOWN"]:
             device_data = message.get("data", {})
             if str(device_data.get("deviceId")) == str(self._device.id):
-                self._attr_native_value = device_data.get("currentPhase", "unknown")
+                # workStatus: 1 = work, 0 = pause
+                if "workStatus" in device_data:
+                    self._attr_native_value = "work" if device_data.get("workStatus") == 1 else "pause"
+                elif "currentPhase" in device_data:
+                    self._attr_native_value = device_data.get("currentPhase", "unknown")
                 self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
@@ -112,8 +116,14 @@ class AromaLinkWorkCountdownSensor(AromaLinkBaseSensor):
             if str(device_data.get("deviceId")) == str(self._device.id):
                 if "workRemainTime" in device_data:
                     self._attr_native_value = device_data["workRemainTime"]
+                    # Determine phase from workStatus or currentPhase
+                    phase = "unknown"
+                    if "workStatus" in device_data:
+                        phase = "work" if device_data.get("workStatus") == 1 else "pause"
+                    elif "currentPhase" in device_data:
+                        phase = device_data.get("currentPhase", "unknown")
                     self._attr_extra_state_attributes = {
-                        "current_phase": device_data.get("currentPhase", "unknown"),
+                        "current_phase": phase,
                     }
                     self.async_write_ha_state()
 
@@ -143,8 +153,14 @@ class AromaLinkPauseCountdownSensor(AromaLinkBaseSensor):
             if str(device_data.get("deviceId")) == str(self._device.id):
                 if "pauseRemainTime" in device_data:
                     self._attr_native_value = device_data["pauseRemainTime"]
+                    # Determine phase from workStatus or currentPhase
+                    phase = "unknown"
+                    if "workStatus" in device_data:
+                        phase = "work" if device_data.get("workStatus") == 1 else "pause"
+                    elif "currentPhase" in device_data:
+                        phase = device_data.get("currentPhase", "unknown")
                     self._attr_extra_state_attributes = {
-                        "current_phase": device_data.get("currentPhase", "unknown"),
+                        "current_phase": phase,
                     }
                     self.async_write_ha_state()
 
