@@ -214,6 +214,7 @@ class AromaLinkClient:
                 "work_time": 0,
                 "pause_time": 0,
                 "waiting_for_response": False,
+                "last_update_time": time.time(),  # Timestamp for drift correction
             }
 
     async def start_websocket(self, device_id):
@@ -357,6 +358,8 @@ class AromaLinkClient:
 
                 if str(device_data.get("deviceId")) == str(device_id):
                     state = self._device_state[device_id]
+                    # Update timestamp for drift correction
+                    state["last_update_time"] = time.time()
                     state["work_time"] = device_data.get("workTime", 0)
                     state["pause_time"] = device_data.get("pauseTime", 0)
                     state["work_remain_time"] = device_data.get("workRemainTime", 0)
@@ -364,11 +367,13 @@ class AromaLinkClient:
                     state["current_phase"] = "work" if device_data.get("workStatus") == 1 else "pause"
                     state["waiting_for_response"] = False
                     _LOGGER.debug(
-                        "Updated state for device %s: work_time=%s, pause_time=%s, phase=%s",
+                        "Updated state for device %s: work_time=%s, pause_time=%s, phase=%s, work_remain=%s, pause_remain=%s",
                         device_id,
                         state["work_time"],
                         state["pause_time"],
                         state["current_phase"],
+                        state["work_remain_time"],
+                        state["pause_remain_time"],
                     )
 
             # Notify all callbacks
@@ -427,52 +432,75 @@ class AromaLinkClient:
                 await asyncio.sleep(1)
 
     async def _countdown_monitor(self, device_id: str):
-        """Monitor and update countdown timers for a specific device."""
+        """Monitor and update countdown timers for a specific device using timestamp-based calculations."""
         while self._ws_connected.get(device_id, False):
             try:
                 state = self._device_state.get(device_id)
                 if not state:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
                     continue
 
                 current_phase = state.get("current_phase")
-                work_remain = state.get("work_remain_time", 0)
-                pause_remain = state.get("pause_remain_time", 0)
+                if not current_phase:
+                    await asyncio.sleep(0.5)
+                    continue
 
-                if current_phase == "work" and work_remain > 0:
-                    state["work_remain_time"] = work_remain - 1
-                    # Notify callbacks of time change
-                    for callback in self._callbacks:
-                        await callback({
-                            "type": "COUNTDOWN",
-                            "data": {
-                                "deviceId": device_id,
-                                "workRemainTime": state["work_remain_time"],
-                                "currentPhase": "work"
-                            }
-                        })
-                elif current_phase == "pause" and pause_remain > 0:
-                    state["pause_remain_time"] = pause_remain - 1
-                    # Notify callbacks of time change
-                    for callback in self._callbacks:
-                        await callback({
-                            "type": "COUNTDOWN",
-                            "data": {
-                                "deviceId": device_id,
-                                "pauseRemainTime": state["pause_remain_time"],
-                                "currentPhase": "pause"
-                            }
-                        })
+                # Calculate elapsed time since last server update
+                elapsed = time.time() - state.get("last_update_time", time.time())
 
-                # Handle phase transition
-                if current_phase == "work" and state["work_remain_time"] == 0:
-                    state["current_phase"] = "pause"
-                    _LOGGER.debug("Device %s transitioned to pause phase", device_id)
-                elif current_phase == "pause" and state["pause_remain_time"] == 0:
-                    state["current_phase"] = "work"
-                    _LOGGER.debug("Device %s transitioned to work phase", device_id)
+                # Calculate current countdown values based on elapsed time
+                work_remain_base = state.get("work_remain_time", 0)
+                pause_remain_base = state.get("pause_remain_time", 0)
 
-                await asyncio.sleep(1)
+                # Current actual countdown value
+                if current_phase == "work":
+                    current_countdown = max(0, int(work_remain_base - elapsed))
+                else:  # pause
+                    current_countdown = max(0, int(pause_remain_base - elapsed))
+
+                # Handle phase transition when countdown reaches 0
+                if current_countdown == 0:
+                    if current_phase == "work":
+                        # Transition to pause
+                        state["current_phase"] = "pause"
+                        state["last_update_time"] = time.time()
+                        state["pause_remain_time"] = state.get("pause_time", 0)
+                        state["work_remain_time"] = 0
+                        _LOGGER.debug("Device %s transitioned to pause phase, reset to %ss",
+                                     device_id, state["pause_remain_time"])
+                        current_countdown = state["pause_remain_time"]
+                        current_phase = "pause"
+                    else:  # pause
+                        # Transition to work
+                        state["current_phase"] = "work"
+                        state["last_update_time"] = time.time()
+                        state["work_remain_time"] = state.get("work_time", 0)
+                        state["pause_remain_time"] = 0
+                        _LOGGER.debug("Device %s transitioned to work phase, reset to %ss",
+                                     device_id, state["work_remain_time"])
+                        current_countdown = state["work_remain_time"]
+                        current_phase = "work"
+
+                # Notify callbacks with calculated countdown values
+                callback_data = {
+                    "type": "COUNTDOWN",
+                    "data": {
+                        "deviceId": device_id,
+                        "workStatus": 1 if current_phase == "work" else 0,
+                    }
+                }
+
+                if current_phase == "work":
+                    callback_data["data"]["workRemainTime"] = current_countdown
+                    callback_data["data"]["pauseRemainTime"] = state.get("pause_time", 0)
+                else:
+                    callback_data["data"]["pauseRemainTime"] = current_countdown
+                    callback_data["data"]["workRemainTime"] = state.get("work_time", 0)
+
+                for callback in self._callbacks:
+                    await callback(callback_data)
+
+                await asyncio.sleep(0.5)  # Update twice per second for smoother countdown
             except Exception as e:
                 _LOGGER.error("Error in countdown monitor for device %s: %s", device_id, e)
                 await asyncio.sleep(1)
