@@ -358,22 +358,37 @@ class AromaLinkClient:
 
                 if str(device_data.get("deviceId")) == str(device_id):
                     state = self._device_state[device_id]
-                    # Update timestamp for drift correction
+
+                    # Calculate network delay using sendTime
+                    receive_time_ms = time.time() * 1000  # Current time in milliseconds
+                    send_time_ms = data.get("sendTime", receive_time_ms)  # Server send time
+                    network_delay_sec = (receive_time_ms - send_time_ms) / 1000.0
+
+                    # Adjust countdown values for network delay
+                    work_remain_raw = device_data.get("workRemainTime", 0)
+                    pause_remain_raw = device_data.get("pauseRemainTime", 0)
+
+                    # Update timestamp for drift correction (when we received the message)
                     state["last_update_time"] = time.time()
                     state["work_time"] = device_data.get("workTime", 0)
                     state["pause_time"] = device_data.get("pauseTime", 0)
-                    state["work_remain_time"] = device_data.get("workRemainTime", 0)
-                    state["pause_remain_time"] = device_data.get("pauseRemainTime", 0)
+
+                    # Adjust countdown for network delay (but don't go negative)
+                    state["work_remain_time"] = max(0, work_remain_raw - network_delay_sec)
+                    state["pause_remain_time"] = max(0, pause_remain_raw - network_delay_sec)
+
                     state["current_phase"] = "work" if device_data.get("workStatus") == 1 else "pause"
                     state["waiting_for_response"] = False
+
                     _LOGGER.debug(
-                        "Updated state for device %s: work_time=%s, pause_time=%s, phase=%s, work_remain=%s, pause_remain=%s",
+                        "Updated state for device %s: phase=%s, work_remain=%s (raw=%s), pause_remain=%s (raw=%s), delay=%.3fs",
                         device_id,
-                        state["work_time"],
-                        state["pause_time"],
                         state["current_phase"],
                         state["work_remain_time"],
+                        work_remain_raw,
                         state["pause_remain_time"],
+                        pause_remain_raw,
+                        network_delay_sec,
                     )
 
             # Notify all callbacks
