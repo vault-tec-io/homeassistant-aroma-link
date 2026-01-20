@@ -1,3 +1,6 @@
+#local dev resouces
+dev/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
