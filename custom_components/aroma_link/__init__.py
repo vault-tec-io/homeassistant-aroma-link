@@ -16,7 +16,6 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER]
-CUSTOM_PLATFORMS: list[str] = ["device_schedule"]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Aroma-Link component."""
@@ -70,8 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        await hass.config_entries.async_forward_entry_setups(entry, CUSTOM_PLATFORMS)
-        
+
         # Start WebSocket connection after platforms are set up
         for device in devices:
             await client.start_websocket(device.id)
@@ -90,7 +88,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await data["client"].stop_all_websockets()
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    unload_ok = unload_ok and await hass.config_entries.async_unload_platforms(entry, CUSTOM_PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
