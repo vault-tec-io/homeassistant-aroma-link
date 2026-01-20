@@ -203,8 +203,9 @@ class AromaLinkClient:
             _LOGGER.error("Failed to set schedule: %s", e)
             return False
 
-    def _init_device_state(self, device_id: str):
+    def _init_device_state(self, device_id):
         """Initialize state tracking for a device."""
+        device_id = str(device_id)  # Ensure consistent string type
         if device_id not in self._device_state:
             self._device_state[device_id] = {
                 "current_phase": None,
@@ -215,8 +216,9 @@ class AromaLinkClient:
                 "waiting_for_response": False,
             }
 
-    async def start_websocket(self, device_id: str):
+    async def start_websocket(self, device_id):
         """Start WebSocket connection for a device."""
+        device_id = str(device_id)  # Ensure consistent string type
         if device_id in self.ws_tasks:
             return
         self._init_device_state(device_id)
@@ -478,8 +480,9 @@ class AromaLinkClient:
         for device_id in list(self.ws_tasks.keys()):
             await self.stop_websocket(device_id)
 
-    async def stop_websocket(self, device_id: str):
+    async def stop_websocket(self, device_id):
         """Stop WebSocket connection for a specific device."""
+        device_id = str(device_id)  # Ensure consistent string type
         # Mark as disconnected to stop loops
         self._ws_connected[device_id] = False
 
