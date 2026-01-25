@@ -42,7 +42,7 @@ class AromaLinkPowerSwitch(SwitchEntity):
         self._attr_unique_id = f"{device.id}_power"
         self._attr_name = f"{device.name} Power"
         self.icon = "mdi:power"
-        self._is_on = device.online  # Use last known state
+        self._is_on = None  # Will be updated from WebSocket
         self._client.add_callback(self._handle_ws_message)
 
     async def _handle_ws_message(self, message: dict) -> None:
@@ -107,8 +107,8 @@ class AromaLinkFanSwitch(SwitchEntity):
         self._device = device
         self._attr_unique_id = f"{device.id}_fan"
         self._attr_name = f"{device.name} Fan"
-        self._is_on = device.online  # Use last known state
-  
+        self._is_on = None  # Will be updated from WebSocket
+
         # Register callback for WebSocket updates
         self._client.add_callback(self._handle_ws_message)
 
