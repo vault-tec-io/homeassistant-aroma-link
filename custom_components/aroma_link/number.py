@@ -103,7 +103,14 @@ class AromaLinkBaseNumber(NumberEntity):
                 return
 
             if str(device_data.get("deviceId")) == str(self._device.id):
-                new_value = device_data.get(self.entity_description.key)
+                # Map snake_case entity keys to camelCase WebSocket keys
+                key_mapping = {
+                    "work_time": "workTime",
+                    "pause_time": "pauseTime",
+                }
+                ws_key = key_mapping.get(self.entity_description.key, self.entity_description.key)
+                new_value = device_data.get(ws_key)
+
                 if new_value is not None and new_value != self._attr_native_value:
                     _LOGGER.debug(
                         "Updating %s from %s to %s",

@@ -482,6 +482,8 @@ class AromaLinkClient:
 
     async def _countdown_monitor(self, device_id: str):
         """Monitor and update countdown timers for a specific device using timestamp-based calculations."""
+        last_countdown_value = None  # Track when countdown hits 0
+
         while self._ws_connected.get(device_id, False):
             try:
                 state = self._device_state.get(device_id)
@@ -508,10 +510,19 @@ class AromaLinkClient:
                     # Work is counting down, pause shows full duration
                     work_countdown = max(0, int(work_remain_base - elapsed))
                     pause_countdown = pause_time
+                    active_countdown = work_countdown
                 else:  # pause
                     # Pause is counting down, work shows full duration
                     work_countdown = work_time
                     pause_countdown = max(0, int(pause_remain_base - elapsed))
+                    active_countdown = pause_countdown
+
+                # Request fresh state when countdown hits 0 to get phase transition
+                if active_countdown == 0 and last_countdown_value != 0:
+                    _LOGGER.debug("Countdown hit 0 for device %s, requesting fresh state", device_id)
+                    await self._send_supercommand(device_id)
+
+                last_countdown_value = active_countdown
 
                 # Notify callbacks with calculated countdown values
                 callback_data = {
