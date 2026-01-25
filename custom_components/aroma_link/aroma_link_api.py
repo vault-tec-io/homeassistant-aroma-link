@@ -497,13 +497,21 @@ class AromaLinkClient:
                 # Calculate elapsed time since last server update
                 elapsed = time.time() - state.get("last_update_time", time.time())
 
-                # Calculate current countdown values based on elapsed time
+                # Get base values from server
                 work_remain_base = state.get("work_remain_time", 0)
                 pause_remain_base = state.get("pause_remain_time", 0)
+                work_time = state.get("work_time", 0)
+                pause_time = state.get("pause_time", 0)
 
-                # Calculate both countdown values (server manages phase transitions)
-                work_countdown = max(0, int(work_remain_base - elapsed))
-                pause_countdown = max(0, int(pause_remain_base - elapsed))
+                # Only countdown the ACTIVE phase, inactive phase shows configured duration
+                if current_phase == "work":
+                    # Work is counting down, pause shows full duration
+                    work_countdown = max(0, int(work_remain_base - elapsed))
+                    pause_countdown = pause_time
+                else:  # pause
+                    # Pause is counting down, work shows full duration
+                    work_countdown = work_time
+                    pause_countdown = max(0, int(pause_remain_base - elapsed))
 
                 # Notify callbacks with calculated countdown values
                 callback_data = {
