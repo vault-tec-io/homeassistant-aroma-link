@@ -293,6 +293,11 @@ class AromaLinkClient:
                 _LOGGER.error("Heartbeat error for device %s: %s", device_id, e)
                 break
 
+    async def _delayed_supercommand(self, device_id: str, delay: float):
+        """Send SUPERCOMMAND after a delay (for phase transitions)."""
+        await asyncio.sleep(delay)
+        await self._send_supercommand(device_id)
+
     async def _send_supercommand(self, device_id: str):
         """Send SUPERCOMMAND message with trigger."""
         try:
@@ -518,11 +523,10 @@ class AromaLinkClient:
                     active_countdown = pause_countdown
 
                 # Request fresh state when countdown hits 0 to get phase transition
-                # Wait briefly to let device transition before requesting new state
+                # Schedule request asynchronously without blocking countdown updates
                 if active_countdown == 0 and last_countdown_value != 0:
-                    _LOGGER.debug("Countdown hit 0 for device %s, waiting 2s then requesting fresh state", device_id)
-                    await asyncio.sleep(2)  # Give device time to transition
-                    await self._send_supercommand(device_id)
+                    _LOGGER.debug("Countdown hit 0 for device %s, scheduling state refresh in 2s", device_id)
+                    asyncio.create_task(self._delayed_supercommand(device_id, 2))
 
                 last_countdown_value = active_countdown
 
