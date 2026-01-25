@@ -83,8 +83,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             end_time = call.data.get("end_time")
             work_duration = call.data.get("work_duration")
             pause_duration = call.data.get("pause_duration")
-            days = call.data.get("days", [0, 1, 2, 3, 4, 5, 6])
+            days_raw = call.data.get("days", [0, 1, 2, 3, 4, 5, 6])
             enabled = call.data.get("enabled", True)
+
+            # Convert days from strings to integers if needed
+            days = [int(d) if isinstance(d, str) else d for d in days_raw]
 
             # Fetch current schedule
             schedule_blocks = await client.get_schedule(device_id)
