@@ -108,8 +108,7 @@ class AromaLinkFanSwitch(SwitchEntity):
         self._attr_unique_id = f"{device.id}_fan"
         self._attr_name = f"{device.name} Fan"
         self._is_on = device.online  # Use last known state
-        self._attr_entity_category = EntityCategory.CONFIG
-
+  
         # Register callback for WebSocket updates
         self._client.add_callback(self._handle_ws_message)
 
