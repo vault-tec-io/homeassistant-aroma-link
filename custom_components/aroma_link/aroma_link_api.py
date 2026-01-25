@@ -167,38 +167,93 @@ class AromaLinkClient:
     async def set_schedule(
         self,
         device_id: str,
+        schedule_blocks: list = None,
         work_duration: int = None,
         pause_duration: int = None,
     ) -> bool:
-        """Set device schedule."""
-        try:
-            async with self._get_session_context() as session:
-                data = {
-                    "deviceId": device_id,
-                    "userId": self.user_id,
-                    "workTimeList": [{
-                        "startTime": "00:00",
-                        "endTime": "23:59",
-                        "enabled": 1,
-                        "workDuration": str(work_duration) if work_duration is not None else None,
-                        "pauseDuration": str(pause_duration) if pause_duration is not None else None,
-                    }],
-                    "week": [1,2,3,4,5,6,7]  # All days of week
-                }
-                
-                # Remove None values
-                if data["workTimeList"][0]["workDuration"] is None:
-                    del data["workTimeList"][0]["workDuration"]
-                if data["workTimeList"][0]["pauseDuration"] is None:
-                    del data["workTimeList"][0]["pauseDuration"]
+        """Set device schedule.
 
+        Args:
+            device_id: Device ID
+            schedule_blocks: List of schedule block dicts (up to 5 blocks)
+                Each block: {
+                    "start_time": "07:30",
+                    "end_time": "21:30",
+                    "work_duration": 10,
+                    "pause_duration": 300,
+                    "enabled": True,
+                    "days": [0,1,2,3,4,5,6]  # Sunday=0
+                }
+            work_duration: Legacy parameter for simple schedule (deprecated)
+            pause_duration: Legacy parameter for simple schedule (deprecated)
+        """
+        try:
+            # Legacy mode: simple schedule with work/pause duration only
+            if schedule_blocks is None and (work_duration is not None or pause_duration is not None):
+                schedule_blocks = [{
+                    "start_time": "00:00",
+                    "end_time": "23:59",
+                    "work_duration": work_duration or 10,
+                    "pause_duration": pause_duration or 120,
+                    "enabled": True,
+                    "days": [0,1,2,3,4,5,6]
+                }]
+
+            if not schedule_blocks:
+                _LOGGER.error("No schedule blocks provided")
+                return False
+
+            # Build workTimeList - always send exactly 5 blocks
+            work_time_list = []
+            active_days = set()
+
+            for i in range(5):
+                if i < len(schedule_blocks) and schedule_blocks[i].get("enabled", False):
+                    block = schedule_blocks[i]
+                    work_time_list.append({
+                        "startTime": block.get("start_time", "00:00"),
+                        "endTime": block.get("end_time", "00:00"),
+                        "workDuration": str(block.get("work_duration", 10)),
+                        "pauseDuration": str(block.get("pause_duration", 120)),
+                        "enabled": 1,
+                        "consistenceLevel": 1
+                    })
+                    # Collect all days from enabled blocks
+                    active_days.update(block.get("days", [0,1,2,3,4,5,6]))
+                else:
+                    # Disabled block with default values
+                    work_time_list.append({
+                        "startTime": "00:00",
+                        "endTime": "00:00",
+                        "workDuration": "10",
+                        "pauseDuration": "120",
+                        "enabled": 0,
+                        "consistenceLevel": 1
+                    })
+
+            # Use all days that have at least one enabled block
+            week_array = sorted(list(active_days)) if active_days else [0,1,2,3,4,5,6]
+
+            data = {
+                "deviceId": str(device_id),
+                "userId": self.user_id,
+                "workTimeList": work_time_list,
+                "week": week_array
+            }
+
+            async with self._get_session_context() as session:
                 headers = {"access_token": self.access_token}
                 async with session.post(
                     f"{BASE_URL}/v1/app/data/workSetApp",
                     json=data,
                     headers=headers
                 ) as resp:
-                    return resp.status == 200
+                    if resp.status == 200:
+                        _LOGGER.debug("Schedule updated successfully for device %s", device_id)
+                        return True
+                    else:
+                        _LOGGER.error("Failed to set schedule: HTTP %s", resp.status)
+                        return False
         except Exception as e:
             _LOGGER.error("Failed to set schedule: %s", e)
             return False
@@ -215,6 +270,16 @@ class AromaLinkClient:
                 "pause_time": 0,
                 "waiting_for_response": False,
                 "last_update_time": time.time(),  # Timestamp for drift correction
+                "schedule_blocks": [  # Initialize with 5 disabled blocks
+                    {
+                        "start_time": "00:00",
+                        "end_time": "00:00",
+                        "work_duration": 10,
+                        "pause_duration": 120,
+                        "enabled": False,
+                        "days": []
+                    } for _ in range(5)
+                ]
             }
 
     async def start_websocket(self, device_id):
@@ -594,8 +659,62 @@ class AromaLinkClient:
         if callback in self._callbacks:
             self._callbacks.remove(callback)
 
+    async def get_schedule(self, device_id: str) -> Optional[list]:
+        """Get all schedule blocks for a device.
+
+        Returns list of 5 schedule blocks or None if failed.
+        """
+        try:
+            url = f"{BASE_URL}/v1/app/device/newWork/{device_id}?userId={self.user_id}&isOpenPage=0"
+            headers = {
+                "access_token": self.access_token,
+                "User-Agent": "KeRuiMa/1.1.3",
+                "Accept": "*/*",
+                "version": "1"
+            }
+            async with self._get_session_context() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        _LOGGER.error("Failed to get schedule: %s", resp.status)
+                        return None
+                    data = await resp.json()
+                    _LOGGER.debug("Schedule data for device %s: %s", device_id, data)
+
+                    # Parse schedule blocks from response
+                    if data.get("code") == 200 and "data" in data:
+                        work_time_list = data["data"].get("workTimeList", [])
+                        schedule_blocks = []
+
+                        for block in work_time_list:
+                            schedule_blocks.append({
+                                "start_time": block.get("startTime", "00:00"),
+                                "end_time": block.get("endTime", "00:00"),
+                                "work_duration": int(block.get("workDuration", 10)),
+                                "pause_duration": int(block.get("pauseDuration", 120)),
+                                "enabled": block.get("enabled", 0) == 1,
+                                "consistency_level": block.get("consistenceLevel", 1)
+                            })
+
+                        # Ensure we have exactly 5 blocks
+                        while len(schedule_blocks) < 5:
+                            schedule_blocks.append({
+                                "start_time": "00:00",
+                                "end_time": "00:00",
+                                "work_duration": 10,
+                                "pause_duration": 120,
+                                "enabled": False,
+                                "consistency_level": 1
+                            })
+
+                        return schedule_blocks[:5]  # Return exactly 5 blocks
+
+                    return None
+        except Exception as e:
+            _LOGGER.error("Error fetching schedule: %s", e)
+            return None
+
     async def get_schedule_for_day(self, device_id: str, day_of_week: int) -> Optional[dict]:
-        """Get schedule for a specific day (Sunday=0)."""
+        """Get schedule for a specific day (Sunday=0). DEPRECATED - use get_schedule() instead."""
         try:
             url = f"{BASE_URL}/v1/app/device/newWorkTime/{device_id}?userId={self.user_id}&week={day_of_week}"
             headers = {

@@ -15,7 +15,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER]
+PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.SENSOR, Platform.NUMBER, Platform.BINARY_SENSOR]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Aroma-Link component."""
@@ -73,6 +73,74 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start WebSocket connection after platforms are set up
         for device in devices:
             await client.start_websocket(device.id)
+
+        # Register services
+        async def handle_set_schedule_block(call):
+            """Handle set_schedule_block service call."""
+            device_id = call.data.get("device_id")
+            block_number = call.data.get("block_number")
+            start_time = call.data.get("start_time")
+            end_time = call.data.get("end_time")
+            work_duration = call.data.get("work_duration")
+            pause_duration = call.data.get("pause_duration")
+            days = call.data.get("days", [0, 1, 2, 3, 4, 5, 6])
+            enabled = call.data.get("enabled", True)
+
+            # Fetch current schedule
+            schedule_blocks = await client.get_schedule(device_id)
+            if not schedule_blocks:
+                _LOGGER.error("Failed to fetch current schedule for device %s", device_id)
+                return
+
+            # Update the specified block
+            schedule_blocks[block_number - 1] = {
+                "start_time": start_time,
+                "end_time": end_time,
+                "work_duration": work_duration,
+                "pause_duration": pause_duration,
+                "days": days,
+                "enabled": enabled
+            }
+
+            # Send updated schedule
+            if await client.set_schedule(device_id, schedule_blocks=schedule_blocks):
+                _LOGGER.info("Schedule block %s updated for device %s", block_number, device_id)
+            else:
+                _LOGGER.error("Failed to update schedule block %s for device %s", block_number, device_id)
+
+        async def handle_clear_schedule_block(call):
+            """Handle clear_schedule_block service call."""
+            device_id = call.data.get("device_id")
+            block_number = call.data.get("block_number")
+
+            # Fetch current schedule
+            schedule_blocks = await client.get_schedule(device_id)
+            if not schedule_blocks:
+                _LOGGER.error("Failed to fetch current schedule for device %s", device_id)
+                return
+
+            # Disable the specified block
+            schedule_blocks[block_number - 1]["enabled"] = False
+
+            # Send updated schedule
+            if await client.set_schedule(device_id, schedule_blocks=schedule_blocks):
+                _LOGGER.info("Schedule block %s cleared for device %s", block_number, device_id)
+            else:
+                _LOGGER.error("Failed to clear schedule block %s for device %s", block_number, device_id)
+
+        async def handle_sync_schedule(call):
+            """Handle sync_schedule service call."""
+            device_id = call.data.get("device_id")
+
+            schedule_blocks = await client.get_schedule(device_id)
+            if schedule_blocks:
+                _LOGGER.info("Schedule synced for device %s: %s", device_id, schedule_blocks)
+            else:
+                _LOGGER.error("Failed to sync schedule for device %s", device_id)
+
+        hass.services.async_register(DOMAIN, "set_schedule_block", handle_set_schedule_block)
+        hass.services.async_register(DOMAIN, "clear_schedule_block", handle_clear_schedule_block)
+        hass.services.async_register(DOMAIN, "sync_schedule", handle_sync_schedule)
 
         return True
 

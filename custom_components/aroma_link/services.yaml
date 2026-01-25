@@ -1,0 +1,118 @@
+set_schedule_block:
+  name: Set Schedule Block
+  description: Configure a schedule block with time range and work/pause durations.
+  fields:
+    device_id:
+      name: Device ID
+      description: The device ID (e.g., "393705")
+      required: true
+      example: "393705"
+      selector:
+        text:
+    block_number:
+      name: Block Number
+      description: Schedule block number (1-5)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: box
+    start_time:
+      name: Start Time
+      description: Block start time (HH:MM format)
+      required: true
+      example: "07:30"
+      selector:
+        time:
+    end_time:
+      name: End Time
+      description: Block end time (HH:MM format)
+      required: true
+      example: "21:30"
+      selector:
+        time:
+    work_duration:
+      name: Work Duration
+      description: Work phase duration in seconds (5-900)
+      required: true
+      selector:
+        number:
+          min: 5
+          max: 900
+          unit_of_measurement: seconds
+          mode: box
+    pause_duration:
+      name: Pause Duration
+      description: Pause phase duration in seconds (60-900)
+      required: true
+      selector:
+        number:
+          min: 60
+          max: 900
+          unit_of_measurement: seconds
+          mode: box
+    days:
+      name: Days
+      description: Days of the week (0=Sunday, 6=Saturday)
+      required: false
+      default: [0, 1, 2, 3, 4, 5, 6]
+      example: [1, 2, 3, 4, 5]
+      selector:
+        select:
+          options:
+            - label: Sunday
+              value: 0
+            - label: Monday
+              value: 1
+            - label: Tuesday
+              value: 2
+            - label: Wednesday
+              value: 3
+            - label: Thursday
+              value: 4
+            - label: Friday
+              value: 5
+            - label: Saturday
+              value: 6
+          multiple: true
+    enabled:
+      name: Enabled
+      description: Enable or disable this schedule block
+      required: false
+      default: true
+      selector:
+        boolean:
+
+clear_schedule_block:
+  name: Clear Schedule Block
+  description: Disable a schedule block.
+  fields:
+    device_id:
+      name: Device ID
+      description: The device ID (e.g., "393705")
+      required: true
+      example: "393705"
+      selector:
+        text:
+    block_number:
+      name: Block Number
+      description: Schedule block number to clear (1-5)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: box
+
+sync_schedule:
+  name: Sync Schedule
+  description: Fetch and display the current schedule from the device.
+  fields:
+    device_id:
+      name: Device ID
+      description: The device ID (e.g., "393705")
+      required: true
+      example: "393705"
+      selector:
+        text:
