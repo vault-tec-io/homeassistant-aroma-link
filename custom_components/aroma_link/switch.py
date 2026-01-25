@@ -39,8 +39,8 @@ class AromaLinkPowerSwitch(SwitchEntity):
     def __init__(self, client, device: AromaLinkDevice):
         self._client = client
         self._device = device
-        self._attr_unique_id = f"{device.id}_1_power"
-        self._attr_name = f"{device.name} Power"
+        self._attr_unique_id = f"{device.id}_power"
+        self._attr_name = f"{device.name}"
         self.icon = "mdi:power"
         self._is_on = None  # Will be updated from WebSocket
         self._client.add_callback(self._handle_ws_message)
@@ -105,7 +105,7 @@ class AromaLinkFanSwitch(SwitchEntity):
         """Initialize the switch."""
         self._client = client
         self._device = device
-        self._attr_unique_id = f"{device.id}_2_fan"
+        self._attr_unique_id = f"{device.id}_fan"
         self._attr_name = f"{device.name} Fan"
         self._is_on = None  # Will be updated from WebSocket
 
