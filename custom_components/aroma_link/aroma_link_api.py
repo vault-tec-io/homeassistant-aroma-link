@@ -518,8 +518,10 @@ class AromaLinkClient:
                     active_countdown = pause_countdown
 
                 # Request fresh state when countdown hits 0 to get phase transition
+                # Wait briefly to let device transition before requesting new state
                 if active_countdown == 0 and last_countdown_value != 0:
-                    _LOGGER.debug("Countdown hit 0 for device %s, requesting fresh state", device_id)
+                    _LOGGER.debug("Countdown hit 0 for device %s, waiting 2s then requesting fresh state", device_id)
+                    await asyncio.sleep(2)  # Give device time to transition
                     await self._send_supercommand(device_id)
 
                 last_countdown_value = active_countdown
