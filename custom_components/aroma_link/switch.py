@@ -108,7 +108,7 @@ class AromaLinkFanSwitch(SwitchEntity):
         self._attr_unique_id = f"{device.id}_fan"
         self._attr_name = f"{device.name} Fan"
         self._is_on = device.online  # Use last known state
-        self.icon = "mdi:fan"
+        self._attr_entity_category = EntityCategory.CONFIG
 
         # Register callback for WebSocket updates
         self._client.add_callback(self._handle_ws_message)
@@ -140,6 +140,11 @@ class AromaLinkFanSwitch(SwitchEntity):
     def available(self) -> bool:
         """Return True if entity is available."""
         return self._client.is_device_available(self._device.id)
+
+    @property
+    def icon(self) -> str:
+        """Return the icon based on fan state."""
+        return "mdi:fan" if self._is_on else "mdi:fan-off"
 
     @property
     def device_info(self) -> DeviceInfo:
