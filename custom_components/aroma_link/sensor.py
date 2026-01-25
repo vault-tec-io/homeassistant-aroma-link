@@ -85,9 +85,7 @@ class AromaLinkPhaseSensor(AromaLinkBaseSensor):
             if str(device_data.get("deviceId")) == str(self._device.id):
                 # workStatus: 1 = work, 0 = pause
                 if "workStatus" in device_data:
-                    self._attr_native_value = "work" if device_data.get("workStatus") == 1 else "pause"
-                elif "currentPhase" in device_data:
-                    self._attr_native_value = device_data.get("currentPhase", "unknown")
+                    self._attr_native_value = "Work" if device_data.get("workStatus") == 1 else "Pause"
                 self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
@@ -119,9 +117,7 @@ class AromaLinkWorkCountdownSensor(AromaLinkBaseSensor):
                     # Determine phase from workStatus or currentPhase
                     phase = "unknown"
                     if "workStatus" in device_data:
-                        phase = "work" if device_data.get("workStatus") == 1 else "pause"
-                    elif "currentPhase" in device_data:
-                        phase = device_data.get("currentPhase", "unknown")
+                        phase = "Work" if device_data.get("workStatus") == 1 else "Pause"
                     self._attr_extra_state_attributes = {
                         "current_phase": phase,
                     }
@@ -156,9 +152,7 @@ class AromaLinkPauseCountdownSensor(AromaLinkBaseSensor):
                     # Determine phase from workStatus or currentPhase
                     phase = "unknown"
                     if "workStatus" in device_data:
-                        phase = "work" if device_data.get("workStatus") == 1 else "pause"
-                    elif "currentPhase" in device_data:
-                        phase = device_data.get("currentPhase", "unknown")
+                        phase = "Work" if device_data.get("workStatus") == 1 else "Pause"
                     self._attr_extra_state_attributes = {
                         "current_phase": phase,
                     }
