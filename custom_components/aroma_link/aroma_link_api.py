@@ -359,36 +359,70 @@ class AromaLinkClient:
                 if str(device_data.get("deviceId")) == str(device_id):
                     state = self._device_state[device_id]
 
-                    # Calculate network delay using sendTime
-                    receive_time_ms = time.time() * 1000  # Current time in milliseconds
-                    send_time_ms = data.get("sendTime", receive_time_ms)  # Server send time
-                    network_delay_sec = (receive_time_ms - send_time_ms) / 1000.0
-
-                    # Adjust countdown values for network delay
+                    # Get raw countdown values from server
                     work_remain_raw = device_data.get("workRemainTime", 0)
                     pause_remain_raw = device_data.get("pauseRemainTime", 0)
 
-                    # Update timestamp for drift correction (when we received the message)
+                    # Calculate elapsed time using both updateTime and sendTime
+                    receive_time_ms = time.time() * 1000  # Current local time in ms
+                    send_time_ms = data.get("sendTime")  # When server sent the message
+                    update_time_ms = device_data.get("updateTime")  # When device state was updated
+
+                    # Apply time adjustment if timestamps are valid
+                    if send_time_ms and update_time_ms:
+                        # How old was the state when the server sent it
+                        state_age_ms = send_time_ms - update_time_ms
+                        # Network transmission delay
+                        network_delay_ms = receive_time_ms - send_time_ms
+                        # Total elapsed time
+                        total_elapsed_ms = state_age_ms + network_delay_ms
+
+                        # Safety checks for clock desync
+                        if network_delay_ms < 0:
+                            _LOGGER.warning(
+                                "Clock desync detected (negative network delay: %.3fs), using raw values",
+                                network_delay_ms / 1000.0
+                            )
+                            total_elapsed_sec = 0
+                        elif network_delay_ms > 5000:
+                            _LOGGER.warning(
+                                "Excessive network delay detected (%.3fs), possible clock desync, using raw values",
+                                network_delay_ms / 1000.0
+                            )
+                            total_elapsed_sec = 0
+                        else:
+                            total_elapsed_sec = total_elapsed_ms / 1000.0
+                            _LOGGER.debug(
+                                "Time adjustment for device %s: state_age=%.3fs, network_delay=%.3fs, total=%.3fs",
+                                device_id,
+                                state_age_ms / 1000.0,
+                                network_delay_ms / 1000.0,
+                                total_elapsed_sec
+                            )
+                    else:
+                        _LOGGER.debug("Missing timestamps, using raw countdown values")
+                        total_elapsed_sec = 0
+
+                    # Update timestamp when we receive server data
                     state["last_update_time"] = time.time()
                     state["work_time"] = device_data.get("workTime", 0)
                     state["pause_time"] = device_data.get("pauseTime", 0)
 
-                    # Adjust countdown for network delay (but don't go negative)
-                    state["work_remain_time"] = max(0, work_remain_raw - network_delay_sec)
-                    state["pause_remain_time"] = max(0, pause_remain_raw - network_delay_sec)
+                    # Adjust countdown values for elapsed time
+                    state["work_remain_time"] = max(0, work_remain_raw - total_elapsed_sec)
+                    state["pause_remain_time"] = max(0, pause_remain_raw - total_elapsed_sec)
 
                     state["current_phase"] = "work" if device_data.get("workStatus") == 1 else "pause"
                     state["waiting_for_response"] = False
 
                     _LOGGER.debug(
-                        "Updated state for device %s: phase=%s, work_remain=%s (raw=%s), pause_remain=%s (raw=%s), delay=%.3fs",
+                        "Updated state for device %s: phase=%s, work_remain=%s (raw=%s), pause_remain=%s (raw=%s)",
                         device_id,
                         state["current_phase"],
                         state["work_remain_time"],
                         work_remain_raw,
                         state["pause_remain_time"],
                         pause_remain_raw,
-                        network_delay_sec,
                     )
 
             # Notify all callbacks
@@ -467,34 +501,9 @@ class AromaLinkClient:
                 work_remain_base = state.get("work_remain_time", 0)
                 pause_remain_base = state.get("pause_remain_time", 0)
 
-                # Current actual countdown value
-                if current_phase == "work":
-                    current_countdown = max(0, int(work_remain_base - elapsed))
-                else:  # pause
-                    current_countdown = max(0, int(pause_remain_base - elapsed))
-
-                # Handle phase transition when countdown reaches 0
-                if current_countdown == 0:
-                    if current_phase == "work":
-                        # Transition to pause
-                        state["current_phase"] = "pause"
-                        state["last_update_time"] = time.time()
-                        state["pause_remain_time"] = state.get("pause_time", 0)
-                        state["work_remain_time"] = 0
-                        _LOGGER.debug("Device %s transitioned to pause phase, reset to %ss",
-                                     device_id, state["pause_remain_time"])
-                        current_countdown = state["pause_remain_time"]
-                        current_phase = "pause"
-                    else:  # pause
-                        # Transition to work
-                        state["current_phase"] = "work"
-                        state["last_update_time"] = time.time()
-                        state["work_remain_time"] = state.get("work_time", 0)
-                        state["pause_remain_time"] = 0
-                        _LOGGER.debug("Device %s transitioned to work phase, reset to %ss",
-                                     device_id, state["work_remain_time"])
-                        current_countdown = state["work_remain_time"]
-                        current_phase = "work"
+                # Calculate both countdown values (server manages phase transitions)
+                work_countdown = max(0, int(work_remain_base - elapsed))
+                pause_countdown = max(0, int(pause_remain_base - elapsed))
 
                 # Notify callbacks with calculated countdown values
                 callback_data = {
@@ -502,20 +511,15 @@ class AromaLinkClient:
                     "data": {
                         "deviceId": device_id,
                         "workStatus": 1 if current_phase == "work" else 0,
+                        "workRemainTime": work_countdown,
+                        "pauseRemainTime": pause_countdown,
                     }
                 }
-
-                if current_phase == "work":
-                    callback_data["data"]["workRemainTime"] = current_countdown
-                    callback_data["data"]["pauseRemainTime"] = state.get("pause_time", 0)
-                else:
-                    callback_data["data"]["pauseRemainTime"] = current_countdown
-                    callback_data["data"]["workRemainTime"] = state.get("work_time", 0)
 
                 for callback in self._callbacks:
                     await callback(callback_data)
 
-                await asyncio.sleep(0.5)  # Update twice per second for smoother countdown
+                await asyncio.sleep(1)  # Update every second
             except Exception as e:
                 _LOGGER.error("Error in countdown monitor for device %s: %s", device_id, e)
                 await asyncio.sleep(1)
