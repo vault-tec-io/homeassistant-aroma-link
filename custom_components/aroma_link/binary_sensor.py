@@ -66,8 +66,10 @@ class AromaLinkScheduleBlock(BinarySensorEntity):
         self._client.add_callback(self._handle_ws_message)
 
     async def async_added_to_hass(self) -> None:
-        """Fetch schedule when entity is added to hass."""
-        await self._fetch_schedule()
+        """Entity added to hass."""
+        # Don't fetch during initialization - WebSocket may not be connected yet
+        # Schedule data will arrive via WORK_TIME_FREQUENCY WebSocket messages
+        pass
 
     async def _fetch_schedule(self):
         """Fetch current schedule from device."""
@@ -115,9 +117,27 @@ class AromaLinkScheduleBlock(BinarySensorEntity):
 
     async def _handle_ws_message(self, message: dict) -> None:
         """Handle WebSocket state updates."""
-        # Schedule updates might come through WebSocket in future
-        # For now, we rely on manual fetches after updates
-        pass
+        if not isinstance(message, dict):
+            return
+
+        if message.get("type") == "WORK_TIME_FREQUENCY":
+            # Schedule data received
+            schedule_data = message.get("data")
+            if isinstance(schedule_data, list) and len(schedule_data) >= self._block_number:
+                block = schedule_data[self._block_number - 1]
+                # Map field names from WebSocket format
+                parsed_block = {
+                    "start_time": block.get("startHour", "00:00"),
+                    "end_time": block.get("endHour", "00:00"),
+                    "work_duration": block.get("workSec", 10),
+                    "pause_duration": block.get("pauseSec", 120),
+                    "enabled": block.get("enabled", 0) == 1,
+                    "days": [block.get("weekDay", 0)] if block.get("enabled", 0) == 1 else []
+                }
+                _LOGGER.debug("Block %s received WORK_TIME_FREQUENCY update: %s",
+                            self._block_number, parsed_block)
+                self._update_from_block(parsed_block)
+                self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup on entity removal."""
