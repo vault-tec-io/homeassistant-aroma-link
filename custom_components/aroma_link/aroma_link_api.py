@@ -423,7 +423,32 @@ class AromaLinkClient:
                     _LOGGER.error("Failed to decode data field: %s", data["data"])
                     return
 
-            if data.get("type") == "SUPERCOMMAND":
+            msg_type = data.get("type")
+
+            if msg_type == "WORK_TIME_FREQUENCY":
+                # Schedule data received
+                schedule_data = data.get("data")
+                if isinstance(schedule_data, list):
+                    # Parse schedule blocks
+                    schedule_blocks = []
+                    for block in schedule_data:
+                        schedule_blocks.append({
+                            "start_time": block.get("startHour", "00:00"),
+                            "end_time": block.get("endHour", "00:00"),
+                            "work_duration": block.get("workSec", 10),
+                            "pause_duration": block.get("pauseSec", 120),
+                            "enabled": block.get("enabled", 0) == 1,
+                            "consistency_level": block.get("consistenceLevel", 1),
+                            "week_day": block.get("weekDay", 0),
+                        })
+
+                    # Store in device state
+                    state = self._device_state.get(device_id, {})
+                    state["schedule_blocks"] = schedule_blocks
+                    state["schedule_fetched"] = True
+                    _LOGGER.debug("Received %d schedule blocks for device %s", len(schedule_blocks), device_id)
+
+            elif msg_type == "SUPERCOMMAND":
                 device_data = data.get("data", {})
 
                 if str(device_data.get("deviceId")) == str(device_id):
@@ -659,56 +684,75 @@ class AromaLinkClient:
         if callback in self._callbacks:
             self._callbacks.remove(callback)
 
-    async def get_schedule(self, device_id: str) -> Optional[list]:
-        """Get all schedule blocks for a device.
+    async def get_schedule(self, device_id: str, day_of_week: int = None) -> Optional[list]:
+        """Get all schedule blocks for a device for a specific day.
 
-        Returns list of 5 schedule blocks or None if failed.
+        Args:
+            device_id: Device ID
+            day_of_week: Day of week (0=Sunday, 6=Saturday). If None, uses current day.
+
+        Returns list of schedule blocks for the day or None if failed.
         """
+        device_id = str(device_id)
+
+        # Use current day if not specified
+        if day_of_week is None:
+            day_of_week = int(time.strftime("%w"))  # Sunday=0
+
         try:
-            url = f"{BASE_URL}/v1/app/device/newWork/{device_id}?userId={self.user_id}&isOpenPage=0"
+            # Clear previous schedule data
+            state = self._device_state.get(device_id, {})
+            state["schedule_fetched"] = False
+            state["schedule_blocks"] = []
+
+            # Trigger REST API - response comes via WebSocket
+            url = f"{BASE_URL}/v1/app/device/newWorkTime/{device_id}?userId={self.user_id}&week={day_of_week}"
             headers = {
                 "access_token": self.access_token,
                 "User-Agent": "KeRuiMa/1.1.3",
                 "Accept": "*/*",
                 "version": "1"
             }
+
             async with self._get_session_context() as session:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status != 200:
-                        _LOGGER.error("Failed to get schedule: %s", resp.status)
+                        _LOGGER.error("Failed to trigger schedule fetch: %s", resp.status)
                         return None
-                    data = await resp.json()
-                    _LOGGER.debug("Schedule data for device %s: %s", device_id, data)
 
-                    # Parse schedule blocks from response
-                    if data.get("code") == 200 and "data" in data:
-                        work_time_list = data["data"].get("workTimeList", [])
-                        schedule_blocks = []
+                    # Response is just {code: 200, msg: "OK"}
+                    # Actual data comes via WebSocket WORK_TIME_FREQUENCY message
 
-                        for block in work_time_list:
-                            schedule_blocks.append({
-                                "start_time": block.get("startTime", "00:00"),
-                                "end_time": block.get("endTime", "00:00"),
-                                "work_duration": int(block.get("workDuration", 10)),
-                                "pause_duration": int(block.get("pauseDuration", 120)),
-                                "enabled": block.get("enabled", 0) == 1,
-                                "consistency_level": block.get("consistenceLevel", 1)
-                            })
+            # Wait for WebSocket response (max 5 seconds)
+            for i in range(50):  # 50 * 0.1s = 5 seconds
+                await asyncio.sleep(0.1)
+                if state.get("schedule_fetched", False):
+                    schedule_blocks = state.get("schedule_blocks", [])
 
-                        # Ensure we have exactly 5 blocks
-                        while len(schedule_blocks) < 5:
-                            schedule_blocks.append({
-                                "start_time": "00:00",
-                                "end_time": "00:00",
-                                "work_duration": 10,
-                                "pause_duration": 120,
-                                "enabled": False,
-                                "consistency_level": 1
-                            })
+                    # Ensure we have exactly 5 blocks
+                    while len(schedule_blocks) < 5:
+                        schedule_blocks.append({
+                            "start_time": "00:00",
+                            "end_time": "00:00",
+                            "work_duration": 10,
+                            "pause_duration": 120,
+                            "enabled": False,
+                            "consistency_level": 1,
+                            "days": []
+                        })
 
-                        return schedule_blocks[:5]  # Return exactly 5 blocks
+                    # Add day information to each block
+                    for block in schedule_blocks[:5]:
+                        if "days" not in block:
+                            block["days"] = [day_of_week] if block.get("enabled") else []
 
-                    return None
+                    _LOGGER.debug("Schedule retrieved for device %s, day %s: %s blocks",
+                                device_id, day_of_week, len(schedule_blocks))
+                    return schedule_blocks[:5]
+
+            _LOGGER.error("Timeout waiting for schedule data from WebSocket")
+            return None
+
         except Exception as e:
             _LOGGER.error("Error fetching schedule: %s", e)
             return None

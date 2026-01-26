@@ -72,12 +72,16 @@ class AromaLinkScheduleBlock(BinarySensorEntity):
     async def _fetch_schedule(self):
         """Fetch current schedule from device."""
         try:
+            # Get schedule for today (WebSocket-based retrieval)
             schedule_blocks = await self._client.get_schedule(self._device.id)
             if schedule_blocks and len(schedule_blocks) >= self._block_number:
                 block = schedule_blocks[self._block_number - 1]
                 self._update_from_block(block)
                 self._schedule_fetched = True
                 self.async_write_ha_state()
+            else:
+                _LOGGER.warning("No schedule blocks returned for device %s block %s",
+                              self._device.id, self._block_number)
         except Exception as e:
             _LOGGER.error("Failed to fetch schedule for block %s: %s", self._block_number, e)
 
