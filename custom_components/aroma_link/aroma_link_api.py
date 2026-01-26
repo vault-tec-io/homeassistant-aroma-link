@@ -428,11 +428,14 @@ class AromaLinkClient:
             if msg_type == "WORK_TIME_FREQUENCY":
                 # Schedule data received
                 schedule_data = data.get("data")
+                _LOGGER.debug("WORK_TIME_FREQUENCY data type: %s, is_list: %s",
+                            type(schedule_data).__name__, isinstance(schedule_data, list))
+
                 if isinstance(schedule_data, list):
                     # Parse schedule blocks
                     schedule_blocks = []
                     for block in schedule_data:
-                        schedule_blocks.append({
+                        parsed_block = {
                             "start_time": block.get("startHour", "00:00"),
                             "end_time": block.get("endHour", "00:00"),
                             "work_duration": block.get("workSec", 10),
@@ -440,13 +443,18 @@ class AromaLinkClient:
                             "enabled": block.get("enabled", 0) == 1,
                             "consistency_level": block.get("consistenceLevel", 1),
                             "week_day": block.get("weekDay", 0),
-                        })
+                        }
+                        schedule_blocks.append(parsed_block)
+                        _LOGGER.debug("Parsed schedule block: %s", parsed_block)
 
                     # Store in device state
                     state = self._device_state.get(device_id, {})
                     state["schedule_blocks"] = schedule_blocks
                     state["schedule_fetched"] = True
-                    _LOGGER.debug("Received %d schedule blocks for device %s", len(schedule_blocks), device_id)
+                    _LOGGER.debug("Stored %d schedule blocks in device state for device %s",
+                                len(schedule_blocks), device_id)
+                else:
+                    _LOGGER.warning("WORK_TIME_FREQUENCY data is not a list: %s", schedule_data)
 
             elif msg_type == "SUPERCOMMAND":
                 device_data = data.get("data", {})
@@ -724,10 +732,12 @@ class AromaLinkClient:
                     # Actual data comes via WebSocket WORK_TIME_FREQUENCY message
 
             # Wait for WebSocket response (max 5 seconds)
+            _LOGGER.debug("Waiting for WebSocket WORK_TIME_FREQUENCY response...")
             for i in range(50):  # 50 * 0.1s = 5 seconds
                 await asyncio.sleep(0.1)
                 if state.get("schedule_fetched", False):
                     schedule_blocks = state.get("schedule_blocks", [])
+                    _LOGGER.debug("WebSocket response received with %d blocks", len(schedule_blocks))
 
                     # Ensure we have exactly 5 blocks
                     while len(schedule_blocks) < 5:
@@ -750,7 +760,7 @@ class AromaLinkClient:
                                 device_id, day_of_week, len(schedule_blocks))
                     return schedule_blocks[:5]
 
-            _LOGGER.error("Timeout waiting for schedule data from WebSocket")
+            _LOGGER.error("Timeout waiting for schedule data from WebSocket for device %s", device_id)
             return None
 
         except Exception as e:
